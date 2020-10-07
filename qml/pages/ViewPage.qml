@@ -1,47 +1,35 @@
 import QtQuick 2.0
 import Sailfish.Silica 1.0
+import harbour.tidings 1.0
 
 Page {
     id: page
     objectName: "ViewPage"
 
-    property int index: 0
-    property string feedName: newsBlendModel.get(index).name
-    property string title: newsBlendModel.get(index).title
-    property string preview: newsBlendModel.get(index).description
-    property string encoded: newsBlendModel.get(index).encoded
-    property string url: newsBlendModel.get(index).link
-    property string color: newsBlendModel.get(index).color
-    property string date: newsBlendModel.get(index).date
-    property bool read: newsBlendModel.get(index).read
-    property variant enclosures: newsBlendModel.get(index).enclosures
-    property string duration: newsBlendModel.get(index).duration
-    property bool shelved: newsBlendModel.isShelved(index)
+    property GridView listview
+    property variant itemData: listview.currentItem !== null
+                               ? listview.currentItem.data
+                               : null
 
-    property bool _tintedBackground: false
+    property int _currentIndex: listview.currentIndex
+    property int _previousOfFeed: -1
+    property int _nextOfFeed: -1
 
-    property int _previousOfFeed: newsBlendModel.previousOfFeed(index)
-    property int _nextOfFeed: newsBlendModel.nextOfFeed(index)
+    property bool _activated
+
+    property real _pageMargin: (width > height) ? Theme.paddingLarge * 2
+                                                : Theme.paddingLarge
 
     function previousItem() {
-        var props = {
-            "index": index - 1
-        };
-        pageStack.replace("ViewPage.qml", props);
+        listview.currentIndex = listview.currentIndex - 1;
     }
 
     function nextItem() {
-        var props = {
-            "index": index + 1
-        };
-        pageStack.replace("ViewPage.qml", props);
+        listview.currentIndex = listview.currentIndex + 1;
     }
 
     function goToItem(idx) {
-        var props = {
-            "index": idx
-        };
-        pageStack.replace("ViewPage.qml", props);
+        listview.currentIndex = idx;
     }
 
     /* Returns the filename of the given URL.
@@ -92,23 +80,51 @@ Page {
         }
     }
 
-    allowedOrientations: Orientation.Landscape | Orientation.Portrait
+    allowedOrientations: Orientation.All
 
     Component.onCompleted: {
-        navigationState.openedItem(index);
-        if (! read) {
-            newsBlendModel.setRead(index, true);
+        navigationState.openedItem(listview.currentIndex);
+        if (! itemData.read && ! itemData.shelved) {
+            newsBlendModel.setRead(listview.currentIndex, true);
         }
     }
 
     onStatusChanged: {
-        if (status === PageStatus.Active && url !== "")
+        if (status === PageStatus.Active)
         {
-            var props = {
-                "url": url
+            if (itemData.link !== "")
+            {
+                var props = {
+                    "resources": resources
+                };
+
+                pageStack.pushAttached(Qt.resolvedUrl("ResourcesPage.qml"),
+                                       props);
             }
-            pageStack.pushAttached(Qt.resolvedUrl("WebPage.qml"), props);
+
+            page._activated = true;
         }
+    }
+
+    onItemDataChanged: {
+        if (itemData)
+        {
+            navigationState.openedItem(listview.currentIndex);
+            if (! itemData.read && ! itemData.shelved) {
+                newsBlendModel.setRead(listview.currentIndex, true);
+            }
+
+            urlLoader.source = "";
+            htmlFilter.imageProxy = configLoadImages.booleanValue
+                    ? ""
+                    : imagePlaceholder;
+        }
+    }
+
+    on_CurrentIndexChanged: {
+        _previousOfFeed = newsBlendModel.previousOfFeed(listview.currentIndex);
+        _nextOfFeed = newsBlendModel.nextOfFeed(listview.currentIndex);
+
     }
 
     Connections {
@@ -123,16 +139,34 @@ Page {
         }
     }
 
-    Rectangle {
-        visible: _tintedBackground
-        anchors.fill: parent
-        color: Qt.rgba(1, 1, 1, 0.7)
+    QtObject {
+        id: resources
+        property string link: itemData ? itemData.link : ""
+        property variant images: htmlFilter.images
+    }
+
+    QtObject {
+        id: contentProvider
+        property string data: urlLoader.source != "" ? urlLoader.data
+                                                     : itemData ? newsBlendModel.itemBody(itemData.source, itemData.uid)
+                                                                : ""
+    }
+
+    UrlLoader {
+        id: urlLoader
+    }
+
+    HtmlFilter {
+        id: htmlFilter
+        baseUrl: itemData ? itemData.source : ""
+        imageProxy: configLoadImages.booleanValue ? "" :  imagePlaceholder
+        html: contentProvider.data
     }
 
     Rectangle {
         width: 2
         height: parent.height
-        color: page.color
+        color: feedColor[itemData.source]
     }
 
     SilicaFlickable {
@@ -142,87 +176,146 @@ Page {
         contentHeight: column.height
 
         PullDownMenu {
-            MenuItem {
-                text: qsTr("Toggle background")
+            id: pulleyDown
 
-                onClicked: {
-                    _tintedBackground = ! _tintedBackground
+            property var _closeAction
+
+            onActiveChanged: {
+                if (! active && _closeAction)
+                {
+                    _closeAction();
+                    _closeAction = null;
                 }
             }
 
             MenuItem {
                 enabled: _previousOfFeed !== -1
-                text: "<" + feedName + ">"
+                text: "<" + feedName[itemData.source] + ">"
 
                 onClicked: {
-                    goToItem(_previousOfFeed);
+                    function f()
+                    {
+                        goToItem(_previousOfFeed);
+                        contentFlickable.contentY = 0;
+                        column.opacity = 1;
+                    }
+                    pulleyDown._closeAction = f;
+                    column.opacity = 0;
                 }
             }
             MenuItem {
-                enabled: index > 0
+                enabled: listview.currentIndex > 0
                 text: enabled ? qsTr("Previous")
                               : qsTr("Already at the beginning")
 
                 onClicked: {
-                    goToItem(index - 1)
+                    function f()
+                    {
+                        goToItem(listview.currentIndex - 1);
+                        contentFlickable.contentY = 0;
+                        column.opacity = 1;
+                    }
+                    pulleyDown._closeAction = f;
+                    column.opacity = 0;
                 }
             }
         }
 
         PushUpMenu {
+            id: pulleyUp
+
+            property var _closeAction
+
+            onActiveChanged: {
+                if (! active && _closeAction)
+                {
+                    _closeAction();
+                    _closeAction = null;
+                }
+            }
+
             MenuItem {
-                enabled: index < newsBlendModel.count - 1
+                enabled: listview.currentIndex < listview.count - 1
                 text: enabled ? qsTr("Next")
                               : qsTr("Already at the end")
 
                 onClicked: {
-                    goToItem(index + 1)
+                    function f()
+                    {
+                        goToItem(listview.currentIndex + 1);
+                        contentFlickable.contentY = 0;
+                        column.opacity = 1;
+                    }
+                    pulleyUp._closeAction = f;
+                    column.opacity = 0;
                 }
             }
             MenuItem {
                 enabled: _nextOfFeed !== -1
-                text: "<" + feedName + ">"
+                text: "<" + feedName[itemData.source] + ">"
 
                 onClicked: {
-                    goToItem(_nextOfFeed);
+                    function f()
+                    {
+                        goToItem(_nextOfFeed);
+                        contentFlickable.contentY = 0;
+                        column.opacity = 1;
+                    }
+                    pulleyUp._closeAction = f;
+                    column.opacity = 0;
                 }
             }
         }
 
         Column {
             id: column
+
             width: parent.width
             height: childrenRect.height
 
+            Behavior on opacity {
+                NumberAnimation { duration: 300; easing.type: Easing.InOutQuad }
+            }
+
+            LoadImagesButton {
+                visible: htmlFilter.imageProxy !== "" &&
+                         htmlFilter.images.length > 0
+                width: parent.width
+
+                onClicked: {
+                    htmlFilter.imageProxy = "";
+                }
+            }
+
             PageHeader {
                 id: pageHeader
-                title: page.feedName
+                title: feedName[itemData.source]
             }
 
             Item {
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.leftMargin: Theme.paddingLarge
-                anchors.rightMargin: Theme.paddingLarge
+                anchors.leftMargin: _pageMargin
+                anchors.rightMargin: _pageMargin
                 height: childrenRect.height
 
                 Label {
                     anchors.left: parent.left
-                    anchors.right: shelveIcon.left
+                    anchors.right: copyIcon.left
                     anchors.rightMargin: Theme.paddingMedium
                     horizontalAlignment: Text.AlignLeft
-                    color: _tintedBackground ? "#606060" : Theme.highlightColor
-                    font.pixelSize: Theme.fontSizeSmall
+                    color: Theme.highlightColor
+                    font.pixelSize: Theme.fontSizeSmall * (configFontScale.value / 100.0)
                     wrapMode: Text.WrapAtWordBoundaryOrAnywhere
                     textFormat: Text.RichText
-                    text: page.title
+                    text: itemData.title
 
                     MouseArea {
-                        enabled: page.url !== ""
+                        enabled: itemData.link !== ""
                         anchors.fill: parent
                         onClicked: {
                             var props = {
-                                "url": page.url
+                                "url": itemData.link
                             }
                             pageStack.push(Qt.resolvedUrl("ExternalLinkDialog.qml"),
                                            props);
@@ -233,40 +326,69 @@ Page {
                 Image {
                     id: shelveIcon
                     anchors.right: parent.right
-                    source: shelved ? "image://theme/icon-l-favorite"
-                                    : "image://theme/icon-l-star"
+                    source: itemData.shelved ? "image://theme/icon-l-favorite"
+                                             : "image://theme/icon-l-star"
+                    width: Theme.itemSizeSmall
+                    height: width
 
                     MouseArea {
                         anchors.fill: parent
                         onClicked: {
-                            newsBlendModel.shelveItem(index, ! shelved);
-                            shelved = ! shelved;
+                            shelveTimer.itemIndex = listview.currentIndex;
+                            shelveTimer.shelved = ! itemData.shelved;
+                            //newsBlendModel.setShelved(listview.currentIndex, ! itemData.shelved);
+                            itemData.shelved = ! itemData.shelved;
+                            shelveTimer.start();
+                        }
+                    }
+
+                    Timer {
+                        id: shelveTimer
+                        interval: 10
+
+                        property int itemIndex
+                        property bool shelved
+
+                        onTriggered: {
+                            newsBlendModel.setShelved(itemIndex, shelved);
                         }
                     }
                 }
+
+                IconButton {
+                    id: copyIcon
+                    anchors.right: shelveIcon.left
+                    icon.source: "image://theme/icon-m-clipboard"
+
+                    width: Theme.itemSizeSmall
+                    height: width
+
+                    onClicked: Clipboard.text = itemData.link
+                }
+            }
+
+
+            Label {
+                visible: itemData.mediaDuration > 0
+                anchors.left: parent.left
+                anchors.right: parent.right
+                anchors.leftMargin: _pageMargin
+                anchors.rightMargin: _pageMargin
+                horizontalAlignment: Text.AlignLeft
+                color: Theme.highlightColor
+                font.pixelSize: Theme.fontSizeExtraSmall * (configFontScale.value / 100.0)
+                text: qsTr("(%1 seconds)").arg(itemData.mediaDuration)
             }
 
             Label {
-                visible: duration !== undefined && duration > 0
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.leftMargin: Theme.paddingLarge
-                anchors.rightMargin: Theme.paddingLarge
+                anchors.leftMargin: _pageMargin
+                anchors.rightMargin: _pageMargin
                 horizontalAlignment: Text.AlignLeft
-                color: _tintedBackground ? "#606060" : Theme.highlightColor
-                font.pixelSize: Theme.fontSizeExtraSmall
-                text: qsTr("(%1 seconds)").arg(duration)
-            }
-
-            Label {
-                anchors.left: parent.left
-                anchors.right: parent.right
-                anchors.leftMargin: Theme.paddingLarge
-                anchors.rightMargin: Theme.paddingLarge
-                horizontalAlignment: Text.AlignLeft
-                color: _tintedBackground ? "#606060" : Theme.secondaryColor
-                font.pixelSize: Theme.fontSizeExtraSmall
-                text: Format.formatDate(page.date, Formatter.Timepoint)
+                color: Theme.secondaryColor
+                font.pixelSize: Theme.fontSizeExtraSmall * (configFontScale.value / 100.0)
+                text: Format.formatDate(itemData.date, Formatter.Timepoint)
             }
 
             Item {
@@ -275,14 +397,18 @@ Page {
             }
 
             RescalingRichText {
+                id: body
+
+                active: page.status === PageStatus.Active
+
                 anchors.left: parent.left
                 anchors.right: parent.right
-                anchors.leftMargin: Theme.paddingLarge
-                anchors.rightMargin: Theme.paddingLarge
+                anchors.leftMargin: _pageMargin
+                anchors.rightMargin: _pageMargin
 
-                color: _tintedBackground ? "black" : Theme.primaryColor
-                fontSize: Theme.fontSizeSmall
-                text: page.encoded ? page.encoded : page.preview
+                color: Theme.primaryColor
+                fontSize: Theme.fontSizeSmall * (configFontScale.value / 100.0)
+                text: htmlFilter.htmlFiltered
 
                 onLinkActivated: {
                     var props = {
@@ -299,6 +425,110 @@ Page {
                 height: Theme.paddingLarge
             }
 
+            Row {
+                visible: ! urlLoader.loading &&
+                         ! htmlFilter.busy &&
+                         itemData &&
+                         itemData.link !== ""
+                width: column.width
+                height: Theme.itemSizeLarge
+
+                ListItem {
+                    id: fullArticleButton
+                    width: parent.width / 2
+                    contentHeight: parent.height
+
+                    property bool _isFull: urlLoader.source != ""
+
+                    Image {
+                        id: fullArticleIcon
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: _pageMargin
+                        source: fullArticleButton._isFull ? "image://theme/icon-m-up"
+                                                          : "image://theme/icon-m-down"
+                    }
+
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: fullArticleIcon.right
+                        anchors.leftMargin: Theme.paddingMedium
+                        text: fullArticleButton._isFull ? qsTr("Short article")
+                                                        : qsTr("Full article")
+                    }
+
+                    onClicked: {
+                        if (_isFull)
+                        {
+                            urlLoader.source = "";
+                        }
+                        else
+                        {
+                            urlLoader.source = itemData.link;
+                        }
+                    }
+                }
+
+                ListItem {
+                    width: parent.width / 2
+                    contentHeight: parent.height
+
+                    Image {
+                        id: webIcon
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: parent.left
+                        anchors.leftMargin: _pageMargin
+                        source: "image://theme/icon-m-region"
+                    }
+
+                    Label {
+                        anchors.verticalCenter: parent.verticalCenter
+                        anchors.left: webIcon.right
+                        anchors.leftMargin: Theme.paddingMedium
+                        text: qsTr("Website")
+                    }
+
+                    onClicked: {
+                        var props = {
+                            "url": itemData.link
+                        }
+                        pageStack.push(Qt.resolvedUrl("WebPage.qml"), props);
+                    }
+                }
+            }
+
+            /*
+            ListItem {
+                width: parent.width
+
+                Image {
+                    id: shareIcon
+                    x: Theme.paddingLarge
+                    anchors.verticalCenter: parent.verticalCenter
+                    source: "image://theme/icon-l-share" +
+                            (parent.highlighted ? "?highlighted" : "")
+                }
+
+                Label {
+                    anchors.left: shareIcon.right
+                    anchors.leftMargin: Theme.paddingMedium
+                    anchors.verticalCenter: parent.verticalCenter
+                    color: parent.highlighted ? Theme.highlightColor : Theme.primaryColor
+                    text: qsTr("Share this")
+                }
+
+                onClicked: {
+                    Qt.openUrlExternally("mailto:friend@email.com?title='Shared from Tidings'");
+                }
+            }
+            */
+
+            Item {
+                visible: enclosureRepeater.count > 0
+                width: 1
+                height: Theme.paddingLarge
+            }
+
             SectionHeader {
                 visible: enclosureRepeater.count > 0
                 text: qsTr("Media")
@@ -306,67 +536,31 @@ Page {
 
             Repeater {
                 id: enclosureRepeater
-                model: enclosures
+                model: itemData.enclosures
 
-                ListItem {
-                    width: column.width
-
-                    Image {
-                        id: mediaIcon
-                        anchors.left: parent.left
-                        anchors.leftMargin: Theme.paddingLarge
-                        width: height
-                        height: parent.height
-                        asynchronous: true
-                        smooth: true
-                        fillMode: Image.PreserveAspectCrop
-                        sourceSize.width: width * 2
-                        sourceSize.height: height * 2
-                        source: enclosureRepeater.count ? _mediaIcon(model.url, model.type) : ""
-                        clip: true
-                    }
-
-                    Label {
-                        id: mediaNameLabel
-                        anchors.left: mediaIcon.right
-                        anchors.right: parent.right
-                        anchors.leftMargin: Theme.paddingLarge
-                        anchors.rightMargin: Theme.paddingLarge
-                        truncationMode: TruncationMode.Fade
-                        font.pixelSize: Theme.fontSizeSmall
-                        color: Theme.primaryColor
-                        text: _urlFilename(model.url)
-                    }
-                    Label {
-                        anchors.top: mediaNameLabel.bottom
-                        anchors.left: mediaNameLabel.left
-                        font.pixelSize: Theme.fontSizeExtraSmall
-                        color: Theme.secondaryColor
-                        text: _mediaTypeName(model.type)
-                    }
-                    Label {
-                        anchors.top: mediaNameLabel.bottom
-                        anchors.right: parent.right
-                        anchors.rightMargin: Theme.paddingLarge
-                        font.pixelSize: Theme.fontSizeExtraSmall
-                        color: Theme.secondaryColor
-                        text: model.length >= 0 ? Format.formatFileSize(model.length)
-                                                : ""
-                    }
-
-                    onClicked: {
-                        Qt.openUrlExternally(model.url);
-                    }
-                }//ListItem
+                delegate: MediaItem {
+                    x: 2
+                    width: column.width - 2
+                    url: modelData.url
+                    mimeType: modelData.type
+                    length: modelData.length
+                }
             }//Repeater
 
-            Item {
-                width: 1
-                height: Theme.paddingLarge
-            }
         }
 
         ScrollDecorator { }
     }
 
+    BusyIndicator {
+        running: urlLoader.loading || htmlFilter.busy
+        anchors.centerIn: parent
+        size: BusyIndicatorSize.Large
+    }
+
+    HintLoader {
+        hint: articleHint
+        when: configHintsEnabled.booleanValue &&
+              page.status === PageStatus.Active
+    }
 }

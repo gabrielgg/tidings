@@ -5,6 +5,8 @@ Page {
 
     property var _callback
 
+    allowedOrientations: Orientation.All
+
     Component.onDestruction: {
         if (_callback)
         {
@@ -30,9 +32,12 @@ Page {
             Label {
                 text: modelData.name
                 anchors.left: parent.left
+                anchors.right: parent.right
                 anchors.leftMargin: Theme.paddingLarge
+                anchors.rightMargin: Theme.paddingLarge
                 anchors.verticalCenter: parent.verticalCenter
                 color: listitem.highlighted ? Theme.highlightColor : Theme.primaryColor
+                wrapMode: Text.Wrap
             }
 
             onClicked: {
@@ -40,7 +45,7 @@ Page {
                 {
                     return function()
                     {
-                        newsBlendModel.feedSorter = sorter;
+                        configFeedSorter.value = sorter.key;
                     }
                 }
 

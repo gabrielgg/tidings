@@ -1,68 +1,38 @@
-/*
-  Copyright (C) 2013 Martin Grimme  <martin.grimme _AT_ gmail.com>
-
-  Copyright (C) 2013 Jolla Ltd.
-  Contact: Thomas Perl <thomas.perl@jollamobile.com>
-  All rights reserved.
-
-  You may use this file under the terms of BSD license as follows:
-
-  Redistribution and use in source and binary forms, with or without
-  modification, are permitted provided that the following conditions are met:
-    * Redistributions of source code must retain the above copyright
-      notice, this list of conditions and the following disclaimer.
-    * Redistributions in binary form must reproduce the above copyright
-      notice, this list of conditions and the following disclaimer in the
-      documentation and/or other materials provided with the distribution.
-    * Neither the name of the Jolla Ltd nor the
-      names of its contributors may be used to endorse or promote products
-      derived from this software without specific prior written permission.
-
-  THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
-  ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
-  WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
-  DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDERS OR CONTRIBUTORS BE LIABLE FOR
-  ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
-  (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
-  LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND
-  ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
-  (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
-  SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
-*/
-
 import QtQuick 2.0
 import Sailfish.Silica 1.0
+import QtMultimedia 5.0
+import harbour.tidings 1.0
 import "pages"
+import "cover"
 
 ApplicationWindow
 {
+    id: appWin
+
+    property alias feedName: sourcesModel.names
+    property alias feedColor: sourcesModel.colors
+
+    property bool bigScreen: width * height > 2000000
+
+    property string imagePlaceholder: configLoadImages.booleanValue
+                                      ? ""
+                                      : Qt.resolvedUrl("pages/placeholder.png")
+
+    allowedOrientations: Orientation.All
+
+    Database {
+        id: database
+    }
+
     SourcesModel {
         id: sourcesModel
 
         onModelChanged: {
             var sources = [];
             for (var i = 0; i < count; i++) {
-                var data = {
-                    "name": get(i).name,
-                    "url": get(i).url,
-                    "color": get(i).color
-                };
-                sources.push(data);
+                sources.push(get(i));
             }
             newsBlendModel.sources = sources;
-            //newsBlendModel.refresh();
-        }
-
-        Component.onCompleted: {
-            if (count === 0) {
-                // add example feeds
-                addSource("Engadget",
-                          "http://www.engadget.com/rss.xml",
-                          "#ff0000");
-                addSource("JollaUsers.com",
-                          "http://jollausers.com/feed/",
-                          "#ffa000");
-            }
         }
     }
 
@@ -72,6 +42,14 @@ ApplicationWindow
         onError: {
             console.log("Error: " + details);
             notification.show(details);
+        }
+
+        onReadyChanged: {
+            if (ready)
+            {
+                database.vacuum();
+                pageStack.replace(Qt.resolvedUrl("pages/SourcesPage.qml"));
+            }
         }
     }
 
@@ -88,7 +66,12 @@ ApplicationWindow
         property string title
         property string thumbnail
         property string page
-        property string mode: "overview"
+        property string currentPage: (pageStack.depth > 0)
+                                     ? pageStack.currentPage.objectName
+                                     : ""
+        property variant lastRefresh: newsBlendModel.lastRefresh
+        property int totalCount: newsBlendModel.count
+        property bool busy: newsBlendModel.busy
 
         property bool hasPrevious
         property bool hasNext
@@ -100,19 +83,156 @@ ApplicationWindow
         signal nextItem
     }
 
-    Connections {
-        target: pageStack
+    ConfigValue {
+        id: configFeedSorter
+        key: "feed-sort-by"
+        value: "feedOnlyLatestFirst"
+    }
 
-        onCurrentPageChanged: {
-            coverAdaptor.mode = pageStack.currentPage.objectName === "ViewPage" ? "feeds"
-                                                                                : "overview";
+    ConfigValue {
+        id: configShowPreviewImages
+        key: "feed-preview-images"
+        value: "1"
+    }
+
+    ConfigValue {
+        id: configLoadImages
+        key: "view-load-images"
+        value: "0"
+    }
+
+    ConfigValue {
+        id: configTintedItems
+        key: "feed-tinted"
+        value: "1"
+    }
+
+    ConfigValue {
+        id: configFontScale
+        key: "font-scale"
+        value: "100"
+    }
+
+    ConfigValue {
+        id: configFontScaleWebEnabled
+        key: "font-scale-web-enabled"
+        value: "0"
+    }
+
+    ConfigValue {
+        id: configHintsEnabled
+        key: "hints-enabled"
+        value: "1"
+    }
+
+    Timer {
+        id: initTimer
+        interval: 500
+        running: true
+
+        onTriggered: {
+            if (sourcesModel.count === 0)
+            {
+                // add example feeds
+                sourcesModel.addSource("Engadget",
+                                       "http://www.engadget.com/rss.xml",
+                                       "#ff0000");
+                sourcesModel.addSource("JollaUsers.com",
+                                       "http://jollausers.com/feed/",
+                                       "#ffa000");
+            }
+            newsBlendModel.tidyCache();
+            newsBlendModel.loadPersistedItems();
         }
+    }
+
+    Timer {
+        id: minuteTimer
+
+        property bool tick: true
+
+        triggeredOnStart: true
+        running: Qt.application.active
+        interval: 60000
+        repeat: true
+
+        onTriggered: {
+            tickChanged();
+        }
+    }
+
+    Audio {
+        id: audioPlayer
+
+        property bool playing: playbackState === Audio.PlayingState
+        property bool paused: playbackState === Audio.PausedState
+
+        autoLoad: false
+        autoPlay: false
+    }
+
+    Downloader {
+        id: downloader
     }
 
     Notification {
         id: notification
     }
 
-    initialPage: FeedsPage { }
-    cover: Qt.resolvedUrl("cover/CoverPage.qml")
+    Hint {
+        id: feedsHint
+        title: qsTr("Feeds overview")
+        items: [qsTr("- Shows all your subscribed feeds."),
+                qsTr("- Pull down to refresh all."),
+                qsTr("- Tap and hold to add or manage feeds.")]
+    }
+
+    Hint {
+        id: manageFeedsHint
+        title: qsTr("Managing mode")
+        items: [qsTr("- Tap on a feed to refresh."),
+                qsTr("- Tap on the edit button to edit."),
+                qsTr("- Tap and hold on a feed to move position."),
+                qsTr("- Tap on empty space to leave managing mode.")]
+    }
+
+    Hint {
+        id: articlesListHint
+        title: qsTr("Articles")
+        items: [qsTr("- Tap on the page header to change sorting."),
+                qsTr("- Pull down to mark all as read.")]
+    }
+
+    Hint {
+        id: articleHint
+        title: qsTr("Article view")
+        items: [qsTr("- Tap on the title to open in external browser."),
+                qsTr("- Tap on the clipboard symbol to copy the link address to the clipboard."),
+                qsTr("- Tap on the star symbol to keep this article.")]
+    }
+
+    initialPage: splashPage
+    cover: coverPage
+
+    Component {
+        id: splashPage
+
+        Page {
+            allowedOrientations: Orientation.All
+
+            Label {
+                anchors.centerIn: parent
+                horizontalAlignment: Text.AlignHCenter
+                font.pixelSize: Theme.fontSizeExtraLarge
+                color: Theme.highlightColor
+                text: qsTr("Loading from cache")
+            }
+        }
+    }
+
+    Component {
+        id: coverPage
+
+        CoverPage { }
+    }
 }

@@ -1,31 +1,78 @@
 #include "feedloader.h"
 #include "appversion.h"
 
+#include <QDomDocument>
+#include <QDomElement>
 #include <QNetworkAccessManager>
 #include <QNetworkReply>
 #include <QNetworkRequest>
-#include <QDomDocument>
-#include <QDomElement>
+#include <QStringList>
 
 #include <QDebug>
+
+namespace
+{
+
+QString nodeText(const QDomNode& node, QStringList path, bool& exists)
+{
+    if (path.isEmpty())
+    {
+        if (node.isElement())
+        {
+            exists = true;
+            return node.toElement().text();
+        }
+        else
+        {
+            exists = false;
+            return QString();
+        }
+    }
+
+    const QString pathItem = path.first();
+
+    QDomNodeList childNodes = node.childNodes();
+    for (int i = 0; i < childNodes.size(); ++i)
+    {
+        QDomNode childNode = childNodes.at(i);
+        if (childNode.isElement() && childNode.toElement().tagName() == pathItem)
+        {
+            return nodeText(childNode, path.mid(1), exists);
+        }
+    }
+    exists = false;
+    return QString();
+}
+
+}
 
 FeedLoader::FeedLoader(QObject* parent)
     : QObject(parent)
     , myNetworkAccessManager(0)
+    , myCurrentReply(0)
     , myIsLoading(false)
+    , myType(Unknown)
 {
     myNetworkAccessManager = new QNetworkAccessManager(this);
 
     connect(myNetworkAccessManager,
-            SIGNAL(sslErrors(QNetworkReply*,QList<QSslError>&)),
+            SIGNAL(sslErrors(QNetworkReply*,QList<QSslError>)),
             this,
             SLOT(slotSslErrors(QNetworkReply*,QList<QSslError>)));
-    connect(myNetworkAccessManager, SIGNAL(finished(QNetworkReply*)),
-            this, SLOT(slotGotReply(QNetworkReply*)));
 }
 
-void FeedLoader::setSource(const QUrl& source)
+void FeedLoader::abort()
 {
+    if (myCurrentReply)
+    {
+        myCurrentReply->abort();
+    }
+}
+
+void FeedLoader::setSource(const QString& source)
+{
+    abort();
+
     mySource = source;
     emit sourceChanged();
 
@@ -33,6 +80,8 @@ void FeedLoader::setSource(const QUrl& source)
     emit loadingChanged();
 
     myData.clear();
+    myType = Unknown;
+    myLogo.clear();
     emit dataChanged();
 
     QNetworkRequest req(source);
@@ -43,14 +92,16 @@ void FeedLoader::setSource(const QUrl& source)
 
     qDebug() << "Requesting" << source;
 
-    myNetworkAccessManager->get(req);
+    myCurrentReply = myNetworkAccessManager->get(req);
+    connect(myCurrentReply, SIGNAL(finished()),
+            this, SLOT(slotGotReply()));
 }
 
-FeedLoader::FeedType FeedLoader::type() const
+void FeedLoader::analyzeFeed()
 {
     if (myData.isEmpty())
     {
-        return Unknown;
+        return;
     }
 
     QDomDocument doc;
@@ -60,26 +111,27 @@ FeedLoader::FeedType FeedLoader::type() const
     qDebug() << "root" << root.tagName();
     if (root.tagName() == "rss")
     {
-        return RSS2; // and also the RSS 0.9x family
+        bool exists = false;
+        myLogo = QUrl(nodeText(root, QStringList() << "channel" << "image" << "url", exists));
+        if (myLogo.isEmpty())
+        {
+            myLogo = QUrl(nodeText(root, QStringList() << "channel"  << "icon", exists));
+        }
+        myType = RSS2; // and also the RSS 0.9x family
+        qDebug() << "logo exists" << exists << myLogo;
     }
     else if (root.tagName() == "RDF")
     {
-        return RDF; // aka RSS 1.0
+        myType = RDF; // aka RSS 1.0
     }
     else if (root.tagName() == "feed")
     {
-        return Atom;
+        myType = Atom;
     }
     else if (root.tagName() == "opml")
     {
-        return OPML;
+        myType = OPML;
     }
-    else
-    {
-        return Unknown;
-    }
-
-
 }
 
 void FeedLoader::slotSslErrors(QNetworkReply* reply,
@@ -90,9 +142,10 @@ void FeedLoader::slotSslErrors(QNetworkReply* reply,
     reply->ignoreSslErrors();
 }
 
-void FeedLoader::slotGotReply(QNetworkReply* reply)
+void FeedLoader::slotGotReply()
 {
-    int httpCode = reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt();
+    QNetworkReply* reply = qobject_cast<QNetworkReply*>(sender());
+    myCurrentReply = 0;
 
     qDebug() << "Receiving"
              << reply->attribute(QNetworkRequest::HttpStatusCodeAttribute).toInt()
@@ -118,7 +171,9 @@ void FeedLoader::slotGotReply(QNetworkReply* reply)
                              QString("Tidings/%1 (Sailfish OS)")
                              .arg(appVersion)
                              .toUtf8());
-            myNetworkAccessManager->get(req);
+            myCurrentReply = myNetworkAccessManager->get(req);
+            connect(myCurrentReply, SIGNAL(finished()),
+                    this, SLOT(slotGotReply()));
         }
         else
         {
@@ -161,6 +216,8 @@ void FeedLoader::slotGotReply(QNetworkReply* reply)
         myData = "<?xml version='1.0' encoding='UTF-8'?>" + data;
         qDebug() << myData.size() << "bytes";
         qDebug() << myData.left(1024);
+        analyzeFeed();
+
         emit dataChanged();
         emit success();
         break;

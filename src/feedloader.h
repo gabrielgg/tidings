@@ -14,9 +14,10 @@ class FeedLoader : public QObject
 {
     Q_OBJECT
     Q_ENUMS(FeedType)
-    Q_PROPERTY(QUrl source READ source WRITE setSource
+    Q_PROPERTY(QString source READ source WRITE setSource
                NOTIFY sourceChanged)
     Q_PROPERTY(FeedType type READ type NOTIFY dataChanged)
+    Q_PROPERTY(QUrl logo READ logo NOTIFY dataChanged)
     Q_PROPERTY(QString data READ data NOTIFY dataChanged)
     Q_PROPERTY(bool loading READ loading NOTIFY loadingChanged)
 public:
@@ -30,6 +31,8 @@ public:
     };
     explicit FeedLoader(QObject* parent = 0);
 
+    Q_INVOKABLE void abort();
+
 signals:
     void sourceChanged();
     void dataChanged();
@@ -38,25 +41,30 @@ signals:
     void error(const QString& details);
 
 private:
-    QUrl source() const { return mySource; }
-    void setSource(const QUrl& source);
+    QString source() const { return mySource; }
+    void setSource(const QString& source);
 
-    FeedType type() const;
-
+    FeedType type() const { return myType; }
+    QUrl logo() const { return myLogo; }
     QString data() const { return myData; }
 
     bool loading() const { return myIsLoading; }
 
+    void analyzeFeed();
+
 private slots:
     void slotSslErrors(QNetworkReply* reply, const QList<QSslError>& errors);
-    void slotGotReply(QNetworkReply* reply);
+    void slotGotReply();
 
 private:
     QNetworkAccessManager* myNetworkAccessManager;
+    QNetworkReply* myCurrentReply;
 
-    QUrl mySource;
+    QString mySource;
     QString myData;
     bool myIsLoading;
+    FeedType myType;
+    QUrl myLogo;
 };
 
 #endif // FEEDLOADER_H

@@ -2,6 +2,9 @@ import QtQuick 2.0
 import Sailfish.Silica 1.0
 
 Page {
+    objectName: "AboutPage"
+
+    allowedOrientations: Orientation.All
 
     Column {
         anchors.left: parent.left
@@ -19,6 +22,8 @@ Page {
         }
 
         Image {
+            width: parent.width / 5
+            height: width
             anchors.horizontalCenter: parent.horizontalCenter
             source: Qt.resolvedUrl("../tidings.png")
             smooth: true
@@ -56,7 +61,7 @@ Page {
             horizontalAlignment: Text.AlignHCenter
             font.pixelSize: Theme.fontSizeExtraSmall
             color: Theme.secondaryColor
-            text: "Copyright © 2013, 2014 Martin Grimme"
+            text: "Copyright © 2013 - 2019 Martin Grimme"
         }
 
         Item {

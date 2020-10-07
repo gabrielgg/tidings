@@ -9,11 +9,16 @@
 TARGET = harbour-tidings
 
 CONFIG += sailfishapp
-QT += xml
+QT += concurrent sql xml
 
 SOURCES += \
     src/harbour-tidings.cpp \
-    src/feedloader.cpp
+    src/feedloader.cpp \
+    src/newsblendmodel.cpp \
+    src/htmlfilter.cpp \
+    src/urlloader.cpp \
+    src/htmlsed.cpp \
+    src/database.cpp
 
 OTHER_FILES += qml/harbour-tidings.qml \
     qml/cover/CoverPage.qml \
@@ -28,7 +33,6 @@ OTHER_FILES += qml/harbour-tidings.qml \
     qml/pages/WebPage.qml \
     qml/pages/FavIcon.qml \
     qml/pages/favicon.js \
-    qml/pages/database.js \
     qml/pages/SourcesModel.qml \
     qml/pages/SourceEditDialog.qml \
     qml/pages/NewsBlendModel.qml \
@@ -44,20 +48,46 @@ OTHER_FILES += qml/harbour-tidings.qml \
     qml/pages/ExternalLinkDialog.qml \
     qml/pages/FeedSorter.qml \
     qml/pages/SortSelectorPage.qml \
-    qml/cover/overlay.png
+    qml/cover/overlay.png \
+    qml/pages/ConfigValue.qml \
+    qml/pages/BackgroundWorker.qml \
+    qml/pages/FeedStats.qml \
+    qml/pages/FeedItem.qml \
+    qml/pages/SettingsPage.qml \
+    qml/pages/MediaItem.qml \
+    qml/pages/ImagePage.qml \
+    qml/pages/ResourcesPage.qml \
+    qml/pages/placeholder.png \
+    qml/pages/LoadImagesButton.qml \
+    qml/pages/Downloader.qml \
+    qml/pages/Hint.qml \
+    qml/pages/HintLoader.qml \
+    qml/pages/FeedParser.qml
 
-TRANSLATIONS = l10n/en_US.ts \
-            l10n/ru_RU.ts
-lupdate_only{
-SOURCES = \
-          qml/pages/*.qml \
-          qml/cover/*.qml
-}
+CONFIG += sailfishapp_i18n
+TRANSLATIONS += translations/harbour-tidings-cs.ts
+TRANSLATIONS += translations/harbour-tidings-de_DE.ts
+TRANSLATIONS += translations/harbour-tidings-fr_FR.ts
+TRANSLATIONS += translations/harbour-tidings-ru_RU.ts
+TRANSLATIONS += translations/harbour-tidings-sv.ts
+TRANSLATIONS += translations/harbour-tidings-pt_BR.ts
+TRANSLATIONS += translations/harbour-tidings-es.ts
 
-RESOURCES += \
-    resources.qrc
+CONFIG += sailfishapp_i18n_unfinished
 
 HEADERS += \
     src/feedloader.h \
     src/appversion.h \
-    src/json.h
+    src/json.h \
+    src/newsblendmodel.h \
+    src/htmlfilter.h \
+    src/dateparser.h \
+    src/urlloader.h \
+    src/htmlsed.h \
+    src/database.h
+
+SAILFISHAPP_ICONS += 86x86 108x108 128x128
+
+DISTFILES += icons/86x86/harbour-tidings.png \
+    icons/108x108/harbour-tidings.png \
+    icons/128x128/harbour-tidings.png

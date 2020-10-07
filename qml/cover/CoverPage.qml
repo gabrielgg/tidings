@@ -4,13 +4,20 @@ import Sailfish.Silica 1.0
 CoverBackground {
     id: cover
 
+    property string _elapsedText
+
     function refreshElapsed() {
-        labelElapsed.text = Format.formatDate(newsBlendModel.lastRefresh,
-                                              Formatter.DurationElapsed);
+        _elapsedText = Format.formatDate(coverAdaptor.lastRefresh,
+                                         Formatter.DurationElapsed);
     }
 
-    onStatusChanged: {
-        if (status === Cover.Active) {
+    Timer {
+        triggeredOnStart: true
+        running: cover.status === Cover.Active
+        interval: 60000
+        repeat: true
+
+        onTriggered: {
             refreshElapsed();
         }
     }
@@ -18,7 +25,8 @@ CoverBackground {
     Image {
         id: backgroundImage
         visible: coverAdaptor.thumbnail !== "" &&
-                 coverAdaptor.mode === "feeds" &&
+                 (coverAdaptor.currentPage === "ViewPage" ||
+                  coverAdaptor.currentPage === "WebPage") &&
                  status === Image.Ready
         anchors.fill: parent
         fillMode: Image.PreserveAspectCrop
@@ -45,14 +53,88 @@ CoverBackground {
 
     Image {
         visible: ! backgroundImage.visible
-        anchors.left: parent.left
+        width: parent.width
+        height: width
         anchors.bottom: parent.bottom
+        fillMode: Image.PreserveAspectCrop
         source: Qt.resolvedUrl("overlay.png")
         opacity: 0.1
     }
 
+    // Main
     Column {
-        visible: coverAdaptor.mode === "overview"
+        visible: coverAdaptor.currentPage === "SourcesPage"
+
+        anchors.left: parent.left
+        anchors.right: parent.right
+        anchors.leftMargin: Theme.paddingLarge
+        anchors.rightMargin: Theme.paddingLarge
+        width: parent.width
+
+        Item {
+            width: 1
+            height: Theme.paddingLarge
+        }
+
+        Item {
+            width: parent.width
+            height: childrenRect.height
+
+            Label {
+                anchors.left: parent.left
+                anchors.right: parent.right
+                truncationMode: TruncationMode.Fade
+                font.pixelSize: Theme.fontSizeExtraSmall
+                color: Theme.secondaryColor
+                text: "Tidings"
+            }
+        }
+
+        Separator {
+            width: parent.width
+            color: Theme.secondaryColor
+        }
+
+        Item {
+            width: 1
+            height: 2 * Theme.paddingLarge
+        }
+
+        Label {
+            visible: coverAdaptor.busy
+            font.pixelSize: Theme.fontSizeLarge
+            color: Theme.highlightColor
+            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+            text: qsTr("Refreshing")
+
+            Timer {
+                property int angle: 0
+
+                running: cover.status === Cover.Active && parent.visible
+                interval: 50
+                repeat: true
+
+                onTriggered: {
+                    var a = angle;
+                    parent.opacity = 0.5 + 0.5 * Math.sin(angle * (Math.PI / 180.0));
+                    angle = (angle + 10) % 360;
+                }
+            }
+        }
+
+        Label {
+            visible: ! coverAdaptor.busy
+            width: parent.width
+            font.pixelSize: Theme.fontSizeLarge
+            color: Theme.highlightColor
+            wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+            text: _elapsedText
+        }
+    }
+
+    // Overview
+    Column {
+        visible: coverAdaptor.currentPage === "FeedsPage"
 
         anchors.left: parent.left
         anchors.right: parent.right
@@ -83,7 +165,7 @@ CoverBackground {
                 anchors.right: parent.right
                 font.pixelSize: Theme.fontSizeExtraSmall
                 color: Theme.secondaryColor
-                text: newsBlendModel.count
+                text: coverAdaptor.totalCount
             }
         }
 
@@ -98,7 +180,7 @@ CoverBackground {
         }
 
         Label {
-            visible: newsBlendModel.busy
+            visible: coverAdaptor.busy
             font.pixelSize: Theme.fontSizeLarge
             color: Theme.highlightColor
             wrapMode: Text.WrapAtWordBoundaryOrAnywhere
@@ -120,17 +202,19 @@ CoverBackground {
         }
 
         Label {
-            id: labelElapsed
-            visible: ! newsBlendModel.busy
+            visible: ! coverAdaptor.busy
             width: parent.width
             font.pixelSize: Theme.fontSizeLarge
             color: Theme.highlightColor
             wrapMode: Text.WrapAtWordBoundaryOrAnywhere
+            text: _elapsedText
         }
     }
 
+    // News Item
     Column {
-        visible: coverAdaptor.mode === "feeds"
+        visible: (coverAdaptor.currentPage === "ViewPage" ||
+                  coverAdaptor.currentPage === "WebPage")
 
         anchors.left: parent.left
         anchors.right: parent.right
@@ -186,12 +270,10 @@ CoverBackground {
         }
     }
 
-
-
     // [previous] and [next]
     CoverActionList {
-        enabled: ! newsBlendModel.busy &&
-                 coverAdaptor.mode === "feeds" &&
+        enabled: ! coverAdaptor.busy &&
+                 coverAdaptor.currentPage === "ViewPage" &&
                  coverAdaptor.hasPrevious &&
                  coverAdaptor.hasNext
 
@@ -212,8 +294,8 @@ CoverBackground {
 
     // [previous] only
     CoverActionList {
-        enabled: ! newsBlendModel.busy &&
-                 coverAdaptor.mode === "feeds" &&
+        enabled: ! coverAdaptor.busy &&
+                 coverAdaptor.currentPage === "ViewPage" &&
                  coverAdaptor.hasPrevious &&
                  ! coverAdaptor.hasNext
 
@@ -227,8 +309,8 @@ CoverBackground {
 
     // [next] only
     CoverActionList {
-        enabled: ! newsBlendModel.busy &&
-                 coverAdaptor.mode === "feeds" &&
+        enabled: ! coverAdaptor.busy &&
+                 coverAdaptor.currentPage === "ViewPage" &&
                  ! coverAdaptor.hasPrevious &&
                  coverAdaptor.hasNext
 
@@ -242,7 +324,7 @@ CoverBackground {
 
     // [abort] while loading
     CoverActionList {
-        enabled: newsBlendModel.busy
+        enabled: coverAdaptor.busy
 
         CoverAction {
             iconSource: "image://theme/icon-cover-cancel"
@@ -254,9 +336,10 @@ CoverBackground {
 
     // [refresh only]
     CoverActionList {
-        enabled: ! newsBlendModel.busy &&
-                 newsBlendModel.count === 0 &&
-                 coverAdaptor.mode === "overview"
+        enabled: ! coverAdaptor.busy &&
+                 (coverAdaptor.currentPage === "SourcesPage" ||
+                  coverAdaptor.currentPage === "FeedsPage" &&
+                  coverAdaptor.totalCount === 0)
 
         CoverAction {
             iconSource: "image://theme/icon-cover-refresh"
@@ -269,9 +352,9 @@ CoverBackground {
 
     // [next] and [refresh]
     CoverActionList {
-        enabled: ! newsBlendModel.busy &&
-                 newsBlendModel.count > 0 &&
-                 coverAdaptor.mode === "overview"
+        enabled: ! coverAdaptor.busy &&
+                 coverAdaptor.currentPage === "FeedsPage" &&
+                 coverAdaptor.totalCount > 0
 
         CoverAction {
             iconSource: "image://theme/icon-cover-next"
